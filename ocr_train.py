@@ -48,27 +48,38 @@ def train(args):
         4,
         False,
     )
-    model = CNNBasedOCRModel(37)
+    model = CNNBasedOCRModel(37).to(device)
+    model.eval()
+    torch.quantization.fuse_modules(
+        model.cnn,
+        modules_to_fuse=[
+            ["0", "1", "2"],  # Conv + BN + ReLU
+            ["5", "6", "7"],
+            ["9", "10", "11"],
+            ["14", "15", "16"],
+        ],
+        inplace=True,
+    )
+    model.train()
+    model.qconfig = torch.quantization.default_qat_qconfig
+    torch.quantization.prepare_qat(model, inplace=True)
     criterion = nn.CrossEntropyLoss()
     optimizer = torch.optim.AdamW(model.parameters(), lr, weight_decay=0.001)
     best_accuracy = 0
     start = 0
     model = model.to(device)
     if args.continue_train:
-        best_accuracy, start = load_checkpoint(model, optimizer, device, "no_ctc_v2")
-
-    writer = SummaryWriter("logs/ocr_no_ctc_v2", flush_secs=30)
+        best_accuracy, start = load_checkpoint(
+            model, optimizer, device, "NoCTC_quantize"
+        )
+    writer = SummaryWriter("logs/ocr_no_ctc_quantize", flush_secs=30)
     for epoch in range(start, epochs):
         progress_bar = tqdm(train_dataloader, colour="cyan", leave=False)
         losses = []
         model.train()
         for image, label in progress_bar:
-            # input_lengths = torch.full((label.shape[0],), 16, dtype=torch.long).to(
-            #     device
-            # )
             image = image.to(device)
             label = label.to(device)
-            # target_len = target_len.to(device)
             logits = model(image).permute(0, 2, 1)
             loss = criterion(logits, label)
             optimizer.zero_grad()
@@ -114,9 +125,11 @@ def train(args):
         if best_accuracy <= accuracy:
             best_accuracy = accuracy
             save_checkpoint(
-                model, optimizer, best_accuracy, epoch + 1, "no_ctc_v2", True
+                model, optimizer, best_accuracy, epoch + 1, "NoCTC_quantize", True
             )
-        save_checkpoint(model, optimizer, best_accuracy, epoch + 1, "no_ctc_v2", False)
+        save_checkpoint(
+            model, optimizer, best_accuracy, epoch + 1, "NoCTC_quantize", False
+        )
     writer.close()
 
 
